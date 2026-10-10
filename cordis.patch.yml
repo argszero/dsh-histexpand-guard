@@ -1,0 +1,76 @@
+# The @argszero/dsh-histexpand-guard bundle patch: mount and go.
+#
+# One report (#9240) describes a session that lost five minutes to a command
+# containing a shebang. The persistent bash tool writes each command into an
+# *interactive* shell as one `$'…'` line:
+#
+#   printf '%s\n' $'<START>'; eval -- $'<command>'; st=$?; printf '%s%s\n' $'<END>' "$st"
+#
+# An interactive bash expands history (`!…`) on that line before it parses
+# anything. When the expander meets a `!` it cannot resolve it prints
+# `bash: !word: event not found` and discards **the whole line** — the `eval`,
+# the exit-status capture and the closing `printf` included. The tool then polls
+# a scrollback that will never carry its end marker until `timeoutMs` expires:
+# 300 seconds, the shipped default.
+#
+# The command looks ordinary, which is why the reports arrive as timeout
+# mysteries: `echo "hi!"` runs and `echo 'hi!'` hangs. The difference is not in
+# the command's meaning. It is that the wrapper renders a caller's `'` as `\'`
+# inside its `$'…'` region, and the expander reads that as the region's end
+# without honouring the backslash — so from the first single quote onward the
+# command text is no longer protected by the wrapper's quoting, and a `!` after
+# it reaches history expansion.
+#
+# `tools/pre-execute` is the seam for exactly this: it is documented as the point
+# to decide *before* a tool runs, and it is consulted before any approval prompt,
+# so a refused command never reaches the shell and never reaches the operator.
+#
+#   const gate = await this.ctx.waterfall(
+#     carrier, 'tools/pre-execute', exec,
+#     () => Promise.resolve<PreToolDecision>({ kind: 'allow' }),
+#   )
+#   const denialReason = decision.kind === 'allow' ? this.guardReason(exec) : decision.reason
+#                    (packages/core/tools/src/index.ts:1508-1513, :1525; the declaration
+#                     and its contract are at :144-154)
+#
+# A `deny` from the waterfall materializes an error result (:1527-1538) and returns
+# before the `dispatch` stage, so the tool body never runs and nothing is asked of
+# the operator — the `ask` resolution only happens for a gate that returned `ask`.
+# `{ prepend: true }` keeps this listener ahead of other policy listeners.
+#
+# This patch mounts the guard, and changes nothing else. It refuses two facts
+# about the text, both of them mechanical:
+#
+#   - the command contains a single quote **and** a `!` after it — the case the
+#     whole guard turns on, because that is where the wrapper's quoting stops
+#     protecting the command;
+#   - that `!` is one history expansion would act on: it is not preceded by a
+#     backslash, its follower is not a space or `=` (a tab does not inhibit),
+#     and no comment the *expander* honours has started before it.
+#
+# The rule was measured, not reasoned: `scripts/calibrate-history-expansion.py`
+# builds the exact line the wrapper builds, feeds it to a real interactive bash,
+# and compares the verdict. It agrees 45/45 on the pinned corpus.
+#
+# It deliberately refuses nothing else. It never acts on the one-shot `bash` tool
+# (`@deepseek-ai/dsh-tool-bash`), whose `bash -c` shell is non-interactive and
+# where a `!` is ordinary text: both packages register a tool named `bash`, so the
+# guard reads the definition the registry resolves for the call and requires the
+# persistent tool's shape — one required `command` parameter and a bare-string
+# result — before it acts. It fails open on anything it cannot read, and a scan
+# that throws is logged and allowed. `mode: 'report'` logs the same findings
+# without refusing, and the `histexpand_check` tool answers the same question on
+# demand, without running anything.
+#
+# This is a guard, not the fix. The fix is one line in the persistent shell's
+# initialization, next to the `stty -echo` the tool already sends:
+#
+#   set +o histexpand
+#
+# `arm: true` writes that line into the agent's live shell when an operator wants
+# the complete fix without patching upstream; the guard itself exists for the
+# deployments that cannot patch it.
+
+- insert:
+    - id: histexpand-guard
+      name: '@argszero/dsh-histexpand-guard'
