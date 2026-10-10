@@ -91,7 +91,15 @@ export interface Settings {
   readonly maxReportedDesignators: number
 }
 
-/** The reference defaults, also exported as the plugin's `Config`. */
+/**
+ * The reference defaults: the value behind every absent knob.
+ *
+ * Deliberately **not** exported as the plugin's `Config`. Cordis validates a
+ * mounted plugin's `Config` through `Config['~standard'].validate`, and a plain
+ * defaults object has no `~standard`, so exporting one there makes the mount
+ * throw before `apply` runs. The entry point exports `{ name, inject, apply }`
+ * with no `Config`, and these defaults arrive through `apply(ctx, config = {})`.
+ */
 export const defaultConfig: Required<Config> = {
   mode: 'enforce',
   onlyTools: ['bash'],

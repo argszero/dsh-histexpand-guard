@@ -81,7 +81,7 @@ operator who wants the complete fix without patching upstream.
 ## Install
 
 ```sh
-npm install @argszero/dsh-histexpand-guard@0.1.0
+npm install @argszero/dsh-histexpand-guard@0.1.1
 ```
 
 The package ships a bundle patch (`dsh.bundle.patch: ./cordis.patch.yml`), so a
